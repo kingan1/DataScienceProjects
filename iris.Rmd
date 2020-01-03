@@ -1,0 +1,186 @@
+---
+title: "Iris Dataset Analysis"
+author: "Ashley King"
+date: '`r format(Sys.time(), "%b %d, %Y at %X")`'
+output:
+  bookdown::html_document2:
+    highlight: textmate
+    theme: yeti
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+
+library(tidyverse)
+library(resampledata)
+library(knitr)
+library(gridExtra)
+library(ggplot2)
+library(dplyr)
+library(gapminder)
+library(skimr)
+library(ggcorrplot)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+```
+
+# Iris dataset analysis
+
+The iris dataset contains measurements about iris flowers, with the aim of classifying the species.
+We will split the data into a train and a test set, and then do an EDA on the train set. In the end, we will create a decision tree model to predict the train set, and test the validity on the test set.
+
+# Splitting the data into train and test
+
+```{r}
+set.seed(1)
+data(iris)
+train <- createDataPartition(iris$Species, p = .8, list = FALSE, times = 1)
+trainIrisData <- iris[train,]
+testIrisData <- iris[-train,]
+```
+
+# Looking at the raw data
+
+```{r}
+trainIrisData %>% 
+  skim(-Species)
+```
+
++ We have 4 variables, Sepal.Length, Sepal.Width, Petal.Length and Petal.Width
++ We do not have any missing variables
++ Sepal.Width has an approximate normal distribution, but we will explore the variables more visually
+
+# Exploring our data visually
+
+```{r}
+plot(trainIrisData)
+```
+
++ This visual explores the distribution of all variables with a scatterplot
++ Petal.Length and Petal.Width seem to have a positive linear relationship
++ Species appears to be a factor with three levels, and you can see a clear pattern within the species
+    + (Looking at the right hand graphs)
+
+
+## Comparing sepal length vs width by species
+
+```{r}
+ggplot(data = trainIrisData, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
+  geom_point() + 
+  facet_grid(~ Species)
+```
+
++ Here we can see that the Setosa flower on average has the highest width and the smallest length.
++ The Versicolor has a smaller width and length on average than the Virginica.
+
+## Comparing Petal length vs width by species
+
+```{r}
+ggplot(data = trainIrisData, aes(x = Petal.Length, y = Petal.Width, color = Species)) +
+  geom_point() + 
+  facet_grid(~ Species)
+```
+
++ This graph shows the large difference between petal measurements among all three Species. 
++ The Setosa, on average, has the smallest petal length and width
++ The Viriginca, on average, has the largest petal length and width
+
+## Exploring boxplots for all variables
+
+### Sepal Length
+
+```{r}
+ggplot(trainIrisData, aes(Species, Sepal.Length, fill=Species)) + 
+        geom_boxplot()
+```
+
++ Setosa, on average, has the shortest Sepal Length, around 5 and two high outliers
++ Versicolor, on average, has a Sepal length of around 6
++ Virginica has one low outlier around 5, while the average Sepal Length is around 6.5
+
+### Sepal Width 
+
+```{r}
+ggplot(trainIrisData, aes(Species, Sepal.Width, fill=Species)) + 
+        geom_boxplot()
+```
+
++ Setosa has one low outlier around 2.25 and the average Sepal Width is around 3.4
++ Versicolor has no outliers and a lower average of around 2.75
++ Virginica has one low outlier around 2.25 and two high outliers above 3.6, with an average Sepal Width of 3.0
+
+### Petal Length
+```{r}
+ggplot(trainIrisData, aes(Species, Petal.Length, fill=Species)) + 
+        geom_boxplot()
+```
+
++ The Petal Length has a very small distribution compared to the other variables
++ The Setosa has one low outler around 1, with an average Petal Length of around 1.75
++ The Versicolor has one low outlier around 3, and an average Petal Length of around 4.25
++ The Virginica does not have any outliers, with an average Petal Length of around 5.5
+
+### Petal Width
+```{r}
+ggplot(trainIrisData, aes(Species, Petal.Width, fill=Species)) + 
+        geom_boxplot()
+```
+
++ The Setosa has the smallest, on average, Petal Width, with an average Width of around 0.25. There are two high outliers around 0.5
++ Versicolor has no outliers, and an average Petal Width of around 1.25
++ The Virginica has the highest Petal Width of (on average) around 2.0
+
+# Building our model
+
+## Decision Tree
+
+A decision tree works by starting at a designated root node, and making a decision based on the data. The model will either choose left or right based on if a condition is met or not. The decisions can be based on categorical data or numerical data.
+
+```{r}
+model <- rpart(Species~., data = trainIrisData, method = 'class')
+rpart.plot(model)
+```
+
+The first decision that the data makes is based on the question: "Is the petal length less than 2.6?" If it is, it classifies the flower as a Setosa. If it is not, it goes to another decision node, where it asks "Is the petal width less than 1.8?" If it is, it is classified as a Versicolor, if not, it is classified as a Virginica.
+
+### Predicting the test data
+
+```{r}
+predictTest <- predict(model, testIrisData, type = 'class')
+tableTest <- table(testIrisData$Species, predictTest)
+tableTest
+```
+
++ This prediction feeds the testing data into the decision tree pictured above
++ The correct predictions are seen on the diagonal from the upper left to lower right
++ The incorrect predictions are seen on all spots that are not on the diagonal, with 2 Species incorrectly predicted.
+
+## Accuracy
+
+```{r}
+mean(predictTest == testIrisData$Species)
+```
+
++ We have a 93% accuraccy
+
+## Error
+```{r}
+mean(predictTest != testIrisData$Species)
+```
+
++ We only have a 3.33% error rate
+
+## Confusion Matrix
+
+```{r}
+confusionMatrix(predictTest, testIrisData$Species)
+```
+
+ + The confusion matrix summarizes the two points we had before
+ + We have an Accuracy of 96.67%
+ + The Kappa is 95%, which in short is the accuracy accounted for chance
+ 
+ 
+ 
