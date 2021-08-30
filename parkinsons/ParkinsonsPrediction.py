@@ -10,6 +10,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectFromModel
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score, train_test_split, validation_curve
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -25,6 +26,7 @@ df = pd.read_csv("pd_speech_features.csv")
 
 df['Parkinsons'] = 'Yes'
 df.loc[df['class'] == 0, 'Parkinsons'] = 'No'
+max_len = sum(df['class'] == 1) / len(df.index)
 random.seed(0)
 
 # Splitting data to X and y
@@ -33,8 +35,8 @@ X, y = df.iloc[:, :-2].values, df['class']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0, stratify=y)
 
 stdsc = StandardScaler()
-X_train_std = stdsc.fit_transform(X_train)
-X_test_std = stdsc.transform(X_test)
+X_train = stdsc.fit_transform(X_train)
+X_test = stdsc.transform(X_test)
 final_models = []
 
 
@@ -45,12 +47,11 @@ def df_summary():
 
 
 def logistic():
-    print("-A")
     lr_base = LogisticRegressionCV(random_state=0, max_iter=10000)
-    lr_base.fit(X_train_std, y_train)
+    lr_base.fit(X_train, y_train)
     if verbose:
-        print('LR Base training accuracy:', lr_base.score(X_train_std, y_train))
-        print('LR Base Test accuracy:', lr_base.score(X_test_std, y_test))
+        print('LR Base training accuracy:', lr_base.score(X_train, y_train))
+        print('LR Base Test accuracy:', lr_base.score(X_test, y_test))
     # Add to our final models to compare
     final_models.append(('LR base', lr_base, 'LR'))
 
@@ -60,10 +61,10 @@ logistic()
 
 def svc():
     svc_base = SVC(random_state=0)
-    svc_base.fit(X_train_std, y_train)
+    svc_base.fit(X_train, y_train)
     if verbose:
-        print('SVC Base Training accuracy:', svc_base.score(X_train_std, y_train))
-        print('SVC Base Test accuracy:', svc_base.score(X_test_std, y_test))
+        print('SVC Base Training accuracy:', svc_base.score(X_train, y_train))
+        print('SVC Base Test accuracy:', svc_base.score(X_test, y_test))
     # Add to our final models to compare
     final_models.append(('SVC base', svc_base, 'SVC'))
 
@@ -80,14 +81,14 @@ def randomforest():
     forest = RandomForestClassifier(n_estimators=500,
                                     random_state=1)
 
-    forest.fit(X_train_std, y_train)
+    forest.fit(X_train, y_train)
     importances = forest.feature_importances_
 
     indices = np.argsort(importances)[::-1]
 
     sfm = SelectFromModel(forest, prefit=True, max_features=20)
-    X_sel = sfm.transform(X_train_std)
-    X_sel_test = sfm.transform(X_test_std)
+    X_sel = sfm.transform(X_train)
+    X_sel_test = sfm.transform(X_test)
 
     if verbose:
         print('Number of features',
@@ -113,6 +114,41 @@ def randomforest():
 
 # Refitting the model
 randomforest()
+
+
+def k_neighbors():
+    pipe_svc = make_pipeline(KNeighborsClassifier(n_jobs=-1))
+
+    param_range = [1, 2, 5, 10, 25, 50]
+    leaf_size = [10, 20, 30, 40, 50, 60, 100]
+    param_grid = [{'kneighborsclassifier__n_neighbors': param_range,
+                   'kneighborsclassifier__weights': ['uniform', 'distance'],
+                   'kneighborsclassifier__p': [1, 2],
+                   'kneighborsclassifier__algorithm': ['auto', 'ball_tree', 'kd_tree', 'brute'],
+                   'kneighborsclassifier__leaf_size': leaf_size}]
+    gs = GridSearchCV(estimator=pipe_svc,
+                      param_grid=param_grid,
+                      scoring='balanced_accuracy',
+                      refit=True,
+                      cv=10,
+                      n_jobs=-1)
+    gs_KN = gs.fit(X_train, y_train)
+    if verbose:
+        print(f'KNeighbors Best score: {gs_KN.best_score_}')
+        print(f'KNeighbors best params: {gs_KN.best_params_}')
+
+    kn_class = gs_KN.best_estimator_
+
+    # note that we do not need to refit the classifier
+    # because this is done automatically via refit=True.
+
+    if verbose:
+        print('KNeighbors Test accuracy: %.3f' % kn_class.score(X_test, y_test))
+    # Add to our final models to compare
+    final_models.append(('KNeighbors', kn_class, 'KN'))
+
+
+k_neighbors()
 
 
 def plot_scaled(train_scores, test_scores, param_range):
@@ -151,14 +187,13 @@ def plot_scaled(train_scores, test_scores, param_range):
 
 
 def scaled():
-    pipe_svc_pca = make_pipeline(StandardScaler(),
-                                 PCA(0.975),
+    pipe_svc_pca = make_pipeline(PCA(0.975),
                                  SVC(random_state=0))
 
     param_range = [0.001, 0.01, 0.1, 1.0, 10.0, 100]
     train_scores, test_scores = validation_curve(
         estimator=pipe_svc_pca,
-        X=X_train_std,
+        X=X_train,
         y=y_train,
         param_name='svc__C',
         param_range=param_range,
@@ -168,15 +203,14 @@ def scaled():
         plot_scaled(train_scores, test_scores, param_range)
 
 
-scaled()
+# scaled()
 
 
 def grid_search():
-    pipe_svc = make_pipeline(StandardScaler(),
-                             PCA(0.975),
+    pipe_svc = make_pipeline(PCA(0.975),
                              SVC(max_iter=-1, random_state=0))
 
-    param_range = [0.001, 0.01, 0.1, 1.0, 10.0, 100]
+    param_range = [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100, 1000]
     param_grid = [{'svc__C': param_range,
                    'svc__kernel': ['linear']},
                   {'svc__C': param_range,
@@ -188,10 +222,10 @@ def grid_search():
                       refit=True,
                       cv=10,
                       n_jobs=-1)
-    gs_PCA = gs.fit(X_train_std, y_train)
+    gs_PCA = gs.fit(X_train, y_train)
     if verbose:
-        print(f'Scaler PCA.95 SVC Best score: {gs_PCA.best_score_}')
-        print(f'Scaler PCA.95 SVC best params: {gs_PCA.best_params_}')
+        print(f'PCA.95 SVC Best score: {gs_PCA.best_score_}')
+        print(f'PCA.95 SVC best params: {gs_PCA.best_params_}')
 
     clf_pca_95 = gs_PCA.best_estimator_
 
@@ -199,24 +233,22 @@ def grid_search():
     # because this is done automatically via refit=True.
 
     if verbose:
-        print('Scaler PCA SVD Test accuracy: %.3f' % clf_pca_95.score(X_test_std, y_test))
+        print('PCA SVD Test accuracy: %.3f' % clf_pca_95.score(X_test, y_test))
     # Add to our final models to compare
-    final_models.append(('SVC with PCA of 0.95', clf_pca_95, 'SVC'))
-    print("C")
-    pipe_LR_PCA95 = make_pipeline(StandardScaler(),
-                                  PCA(0.975),
+    final_models.append(('SVC with PCA of 0.975', clf_pca_95, 'SVC'))
+    pipe_LR_PCA95 = make_pipeline(PCA(0.975),
                                   LogisticRegressionCV(random_state=0, max_iter=10000))
 
     gs = pipe_LR_PCA95
-    clf_pca_95LR = gs.fit(X_train_std, y_train)
+    clf_pca_95LR = gs.fit(X_train, y_train)
 
     # note that we do not need to refit the classifier
     # because this is done automatically via refit=True.
 
     if verbose:
-        print('Scaler PCA Logistic Test accuracy: %.3f' % clf_pca_95LR.score(X_test_std, y_test))
+        print('PCA Logistic Test accuracy: %.3f' % clf_pca_95LR.score(X_test, y_test))
     # Add to our final models to compare
-    final_models.append(('LR with PCA of 0.95', clf_pca_95LR, 'LR'))
+    final_models.append(('LR with PCA of 0.975', clf_pca_95LR, 'LR'))
 
 
 grid_search()
@@ -224,11 +256,11 @@ grid_search()
 
 def pipe_randomforest():
     pipe_rf = make_pipeline(RandomForestClassifier(random_state=0))
-    pipe_rf.fit(X_train_std, y_train)
+    pipe_rf.fit(X_train, y_train)
 
     if verbose:
-        print('Random Forest Train accuracy: %.3f' % pipe_rf.score(X_train_std, y_train))
-        print('Random Forest Test accuracy: %.3f' % pipe_rf.score(X_test_std, y_test))
+        print('Random Forest Train accuracy: %.3f' % pipe_rf.score(X_train, y_train))
+        print('Random Forest Test accuracy: %.3f' % pipe_rf.score(X_test, y_test))
     # Add to our final models to compare
     final_models.append(('Random Forest', pipe_rf, 'RF'))
 
@@ -236,79 +268,60 @@ def pipe_randomforest():
 pipe_randomforest()
 
 
-
 def decision_tree():
-    pipe_rf = make_pipeline(DecisionTreeClassifier(random_state=0))
-    pipe_rf.fit(X_train_std, y_train)
+    pipe_svc = make_pipeline(DecisionTreeClassifier(random_state=0))
+
+    samples_range = [2, 5, 10, 20, 50, 100]
+    param_grid = [{'decisiontreeclassifier__criterion': ['gini', 'entropy'],
+                   'decisiontreeclassifier__splitter': ['best', 'random'],
+                   'decisiontreeclassifier__max_depth': samples_range,
+                   'decisiontreeclassifier__min_samples_split': samples_range,
+                   'decisiontreeclassifier__class_weight': [{0: 0.75, 1: 0.25},
+                                                            {0: 0.25, 1: 0.75},
+                                                            'balanced']}]
+    gs = GridSearchCV(estimator=pipe_svc,
+                      param_grid=param_grid,
+                      scoring='balanced_accuracy',
+                      refit=True,
+                      cv=10,
+                      n_jobs=-1)
+    gs_Decision = gs.fit(X_train, y_train)
+    if verbose:
+        print(f'DecisionTree Best score: {gs_Decision.best_score_}')
+        print(f'DecisionTree best params: {gs_Decision.best_params_}')
+
+    decision_class_s = gs_Decision.best_estimator_
+
+    # note that we do not need to refit the classifier
+    # because this is done automatically via refit=True.
 
     if verbose:
-        print('Decision Tree Train accuracy: %.3f' % pipe_rf.score(X_train_std, y_train))
-        print('Decision Tree Test accuracy: %.3f' % pipe_rf.score(X_test_std, y_test))
+        print('DecisionTree Test accuracy: %.3f' % decision_class_s.score(X_test, y_test))
     # Add to our final models to compare
-    final_models.append(('Decision Tree', pipe_rf, 'DT'))
+    final_models.append(('DecisionTree', decision_class_s, 'DT'))
+
 
 decision_tree()
+
 
 def compare():
     cv = StratifiedKFold(n_splits=3)
 
     all_results = []
     all_names = []
-    lr_results = []
-    lr_names = []
-    svc_results = []
-    svc_names = []
-    rf_results = []
-    rf_names = []
     dict_all = {}
-    # print(final_models)
     for var in range(len(final_models)):
         model_name = final_models[var][0]
         model = final_models[var][1]
-        model_algo = final_models[var][2]
-        train = X_train_std
-        if "standardized" in model_name:
-            train = X_train_std
-        cv_results = cross_val_score(model, train, y_train, cv=cv, scoring='balanced_accuracy')
+        train = X_train
+        cv_results = cross_val_score(model, X_test, y_test, cv=cv, scoring='balanced_accuracy')
 
-        if final_models[var][2] == 'LR':
-            lr_results.append(cv_results)
-            lr_names.append(model_name)
-        elif model_algo == 'SVC':
-            svc_results.append(cv_results)
-            svc_names.append(model_name)
-        else:
-            rf_results.append(cv_results)
-            rf_names.append(model_name)
         dict_all[model_name] = cv_results
         all_results.append(cv_results)
         all_names.append(model_name)
-    # col_names = ['one', 'two', 'three']
     df_models = pd.DataFrame.from_dict(dict_all, orient='index', columns=['one', 'two', 'three'])
     print(df_models)
     df_models.to_csv("all_models.csv")
-    # df
-    # boxplot algorithm comparison
-    fig = plt.figure(figsize=(4, 3))
-    fig.suptitle('Logistic Regression Comparison')
-    ax = fig.add_subplot(111)
-    plt.boxplot(lr_results)  # fill with color)
-    ax.set_xticklabels(lr_names, rotation=90)
-    ax.set_ylim(0.50, 1)
-
-    fig = plt.figure(figsize=(4, 3))
-    fig.suptitle('SVC Comparison')
-    ax = fig.add_subplot(111)
-    plt.boxplot(svc_results)  # fill with color)
-    ax.set_xticklabels(svc_names, rotation=90)
-    ax.set_ylim(0.50, 1)
-
-    fig = plt.figure(figsize=(4, 3))
-    fig.suptitle('RF Comparison')
-    ax = fig.add_subplot(111)
-    plt.boxplot(rf_results)  # fill with color)
-    ax.set_xticklabels(rf_names, rotation=90)
-    ax.set_ylim(0.50, 1)
 
     # fig.show()
 
@@ -318,9 +331,10 @@ def compare():
     plt.boxplot(all_results)  # fill with color)
     ax.set_xticklabels(all_names, rotation=90)
     ax.set_ylim(0.50, 1)
+    plt.plot(max_len)
     fig.show()
 
-    # plt.show()
+    plt.show()
 
 
-# compare()
+compare()
